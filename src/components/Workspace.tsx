@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Note, NOTE_COLORS } from "../types";
 import { supabase, isSupabaseConfigured, dbToNote, noteToDb } from "../lib/supabase";
 import FloatingNote from "./FloatingNote";
@@ -15,6 +15,7 @@ export default function Workspace() {
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [supabaseLoading, setSupabaseLoading] = useState(false);
   const [dbConnected, setDbConnected] = useState(false);
+  const [tableMissingError, setTableMissingError] = useState(false);
   
   // Keep track of timeouts for debouncing database writes per note id
   const debounceTimeoutsRef = useRef<{ [id: string]: NodeJS.Timeout }>({});
@@ -25,47 +26,7 @@ export default function Workspace() {
   // Initialize DB status on load
   const isDbConfigured = isSupabaseConfigured();
 
-  // Load initial notes (either Supabase or LocalStorage)
-  useEffect(() => {
-    async function loadNotes() {
-      setIsLoading(true);
-      
-      if (isDbConfigured && supabase) {
-        setSupabaseLoading(true);
-        try {
-          const { data, error } = await supabase
-            .from("notes")
-            .select("*")
-            .order("created_at", { ascending: true });
-
-          if (error) {
-            console.error("Supabase 로딩 오류:", error.message);
-            loadFromLocalStorage();
-          } else if (data && data.length > 0) {
-            setNotes(data.map(dbToNote));
-            setDbConnected(true);
-          } else {
-            // Configured but empty database
-            setNotes([]);
-            setDbConnected(true);
-          }
-        } catch (err) {
-          console.error("데이터베이스 로드 중 무한 에러 발생", err);
-          loadFromLocalStorage();
-        } finally {
-          setSupabaseLoading(false);
-          setIsLoading(false);
-        }
-      } else {
-        loadFromLocalStorage();
-        setIsLoading(false);
-      }
-    }
-
-    loadNotes();
-  }, [isDbConfigured]);
-
-  const loadFromLocalStorage = () => {
+  const loadFromLocalStorage = useCallback(() => {
     try {
       const stored = localStorage.getItem("airnote-workspace-data");
       if (stored) {
@@ -128,7 +89,57 @@ export default function Workspace() {
     } catch (e) {
       console.error("Local storage 로딩 실패", e);
     }
-  };
+  }, []);
+
+  // Load initial notes (either Supabase or LocalStorage)
+  const loadNotes = useCallback(async () => {
+    setIsLoading(true);
+    
+    if (isDbConfigured && supabase) {
+      setSupabaseLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("notes")
+          .select("*")
+          .order("created_at", { ascending: true });
+
+        if (error) {
+          console.error("Supabase 로딩 오류:", error.message);
+          // Detect if the notes table is missing in the schema
+          if (error.message.includes("public.notes") || error.code === "PGRST116" || error.message.includes("relation") || error.message.includes("schema cache")) {
+            setTableMissingError(true);
+            setDbConnected(false);
+          }
+          loadFromLocalStorage();
+        } else {
+          if (data && data.length > 0) {
+            setNotes(data.map(dbToNote));
+          } else {
+            setNotes([]);
+          }
+          setDbConnected(true);
+          setTableMissingError(false);
+        }
+      } catch (err: any) {
+        console.error("데이터베이스 로드 중 무한 에러 발생", err);
+        if (err?.message?.includes("public.notes") || err?.message?.includes("schema cache")) {
+          setTableMissingError(true);
+          setDbConnected(false);
+        }
+        loadFromLocalStorage();
+      } finally {
+        setSupabaseLoading(false);
+        setIsLoading(false);
+      }
+    } else {
+      loadFromLocalStorage();
+      setIsLoading(false);
+    }
+  }, [isDbConfigured, loadFromLocalStorage]);
+
+  useEffect(() => {
+    loadNotes();
+  }, [loadNotes]);
 
   // Helper to save notes both locally (instant 60fps) and cloud (debounced async)
   const saveAndSync = (updatedNotes: Note[]) => {
@@ -154,7 +165,7 @@ export default function Workspace() {
           };
           
           // Trigger debounced cloud synchronization if active database is set up
-          if (isDbConfigured && supabase) {
+          if (isDbConfigured && supabase && !tableMissingError) {
             triggerCloudSyncDebounced(finished);
           }
           
@@ -178,7 +189,7 @@ export default function Workspace() {
 
     // Set new timeout
     debounceTimeoutsRef.current[note.id] = setTimeout(async () => {
-      if (!supabase) return;
+      if (!supabase || tableMissingError) return;
       
       const dbPayload = noteToDb(note);
       try {
@@ -226,7 +237,7 @@ export default function Workspace() {
     saveAndSync(updatedNotes);
 
     // Write to Supabase instantly for new item creation
-    if (isDbConfigured && supabase) {
+    if (isDbConfigured && supabase && !tableMissingError) {
       try {
         const { error } = await supabase
           .from("notes")
@@ -250,7 +261,7 @@ export default function Workspace() {
       delete debounceTimeoutsRef.current[id];
     }
 
-    if (isDbConfigured && supabase) {
+    if (isDbConfigured && supabase && !tableMissingError) {
       try {
         const { error } = await supabase
           .from("notes")
@@ -303,7 +314,7 @@ export default function Workspace() {
         updatedAt: new Date().toISOString(),
       };
 
-      if (isDbConfigured && supabase) {
+      if (isDbConfigured && supabase && !tableMissingError) {
         triggerCloudSyncDebounced(updated);
       }
 
@@ -319,7 +330,7 @@ export default function Workspace() {
     const updatedNotes = notes.map((note) => {
       if (note.isPinned) {
         const updated = { ...note, isPinned: false, updatedAt: new Date().toISOString() };
-        if (isDbConfigured && supabase) {
+        if (isDbConfigured && supabase && !tableMissingError) {
           triggerCloudSyncDebounced(updated);
         }
         return updated;
@@ -339,7 +350,7 @@ export default function Workspace() {
     Object.values(debounceTimeoutsRef.current).forEach(clearTimeout);
     debounceTimeoutsRef.current = {};
 
-    if (isDbConfigured && supabase) {
+    if (isDbConfigured && supabase && !tableMissingError) {
       try {
         const { error } = await supabase
           .from("notes")
@@ -413,10 +424,52 @@ export default function Workspace() {
         notesCount={notes.length}
       />
 
+      {/* Supabase notes Table Missing Warning Banner */}
+      {tableMissingError && (
+        <div 
+          id="supabase-table-missing-banner"
+          className="fixed top-14 left-0 right-0 h-10 bg-red-950/80 border-b border-red-900/30 backdrop-blur-md flex items-center justify-between px-4 sm:px-6 z-[990] text-xs text-red-200 font-sans shadow-lg select-none animation-fade-in"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+            <span className="truncate">
+              <strong>Supabase 연동 대기:</strong> <code className="bg-black/40 px-1.5 py-0.5 rounded font-mono text-red-300 mr-1 text-[11px]">public.notes</code> 테이블이 없습니다. SQL 실행 후 [재시도]를 눌러주세요.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="banner-retry-btn"
+              onClick={loadNotes}
+              disabled={supabaseLoading}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/20 hover:bg-emerald-500/35 disabled:opacity-50 text-emerald-300 border border-emerald-500/30 rounded transition-all cursor-pointer flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3 h-3 ${supabaseLoading ? "animate-spin" : ""}`} />
+              재시도
+            </button>
+            <button
+              id="banner-open-guide-btn"
+              onClick={() => setIsGuideOpen(true)}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-red-500/10 hover:bg-red-500/20 text-red-100 border border-red-500/20 rounded transition-all cursor-pointer"
+            >
+              가이드 보기
+            </button>
+            <button
+              id="banner-close-btn"
+              onClick={() => setTableMissingError(false)}
+              className="w-6 h-6 rounded-full hover:bg-red-500/10 text-red-400 hover:text-red-200 flex items-center justify-center font-bold text-xs transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Draggable Workspace Canvas */}
       <div 
         id="desktop-board-canvas"
-        className="flex-1 w-full relative overflow-auto p-6 md:p-12 min-h-[calc(100vh-56px)] pt-20 pb-24 z-10"
+        className={`flex-1 w-full relative overflow-auto p-6 md:p-12 min-h-[calc(100vh-56px)] pb-24 z-10 transition-all ${
+          tableMissingError ? "pt-28" : "pt-20"
+        }`}
       >
         {isLoading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900/80 backdrop-blur-xs z-50">

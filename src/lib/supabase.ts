@@ -36,6 +36,7 @@ export const dbToNote = (dbNote: any): Note => {
     createdAt: dbNote.created_at || new Date().toISOString(),
     updatedAt: dbNote.updated_at || new Date().toISOString(),
     tags: Array.isArray(dbNote.tags) ? dbNote.tags : [],
+    importance: Number(dbNote.importance ?? 1),
   };
 };
 
@@ -55,6 +56,7 @@ export const noteToDb = (note: Note): any => {
     z_index: note.zIndex,
     updated_at: new Date().toISOString(),
     tags: note.tags,
+    importance: note.importance || 1,
   };
 };
 
@@ -75,7 +77,8 @@ create table public.notes (
   z_index integer not null default 1,
   created_at timestamp with time zone not null default timezone('utc'::text, now()),
   updated_at timestamp with time zone not null default timezone('utc'::text, now()),
-  tags text[] not null default '{}'::text[]
+  tags text[] not null default '{}'::text[],
+  importance integer not null default 1
 );
 
 -- Enable Row Level Security (RLS) if desired, or allow public anon access:

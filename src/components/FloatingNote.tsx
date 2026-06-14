@@ -11,7 +11,8 @@ import {
   Copy, 
   Check,
   ChevronDown,
-  X
+  X,
+  Star
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -363,6 +364,31 @@ export default function FloatingNote({
                 
                 {/* Auto-save confirmation indicator */}
                 <span className="text-[10px] text-emerald-600 font-medium opacity-80 shrink-0">저장됨</span>
+              </div>
+
+              {/* 1-5 Star Importance Rating */}
+              <div id={`note-importance-stars-${note.id}`} className="flex items-center gap-0.5 mx-1" onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
+                {[1, 2, 3, 4, 5].map((i) => {
+                  const currentImportance = note.importance || 1;
+                  return (
+                    <button
+                      key={i}
+                      id={`note-${note.id}-star-${i}`}
+                      type="button"
+                      onClick={() => onUpdate(note.id, { importance: i })}
+                      className="p-[1px] hover:scale-120 transition-transform cursor-pointer"
+                      title={`중요도: ${i}단계`}
+                    >
+                      <Star 
+                        className={`w-3.5 h-3.5 transition-colors ${
+                          i <= currentImportance 
+                            ? "fill-amber-400 text-amber-500" 
+                            : "text-black/15 hover:text-amber-400/60"
+                        }`} 
+                      />
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Utility actions */}

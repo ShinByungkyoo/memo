@@ -135,6 +135,44 @@ export default function SupabaseGuideModal({ isOpen, onClose }: SupabaseGuideMod
             </div>
           </section>
 
+          {/* Step 4 */}
+          <section className="space-y-2">
+            <h3 className="text-emerald-400 font-semibold flex items-center gap-2">
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-400 text-xs border border-emerald-500/20">4</span>
+              Vercel(버셀) 배포 후 연동하기 (연동 필수 설정)
+            </h3>
+            <p className="pl-7 text-slate-400 text-xs sm:text-sm">
+              Vercel 등 외부 배포 플랫폼에 업로드했을 때 여전히 <span className="text-amber-400 font-medium">로컬 오프라인 모드</span>로 표기된다면, 해당 배포 사이트의 대시보드 옵션에 환경 변수를 입력해야 빌드 프로세스에 보안 연동이 적용됩니다.
+            </p>
+            <div className="pl-7 space-y-1.5 text-xs text-slate-400 bg-slate-950 p-3.5 rounded-lg border border-slate-800">
+              <div className="mb-2 text-slate-200 font-semibold flex items-center gap-1">
+                <span>⚙️ Vercel 대시보드 환경 변수 등록법</span>
+              </div>
+              <div className="space-y-1">
+                <p>1. Vercel 프로젝트 대시보드에 진입하여 <strong className="text-slate-200 font-medium">Settings &gt; Environment Variables</strong> 탭으로 이동합니다.</p>
+                <p>2. Key 칸에 <code className="text-pink-500 font-mono">VITE_SUPABASE_URL</code>을 넣고, Value에 Supabase URL 값을 채운 후 <strong className="text-slate-200">Add</strong>를 클릭합니다.</p>
+                <p>3. Key 칸에 <code className="text-pink-500 font-mono">VITE_SUPABASE_ANON_KEY</code>를 넣고, Value에 Anon Key 값을 채운 후 <strong className="text-slate-200">Add</strong>를 클릭합니다.</p>
+                <p>4. 설정 완료 후, <strong className="text-slate-300">Deployments</strong> 탭으로 이동해 마지막 빌드의 우측 점3개 버튼을 눌러 <strong className="text-emerald-400">Redeploy</strong>(재배포)해 주시면 라이브 연동이 완료됩니다!</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Step 5 */}
+          <section className="space-y-2">
+            <h3 className="text-emerald-400 font-semibold flex items-center gap-2">
+              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-400 text-xs border border-emerald-500/20">5</span>
+              기존 테이블에 '중요도 별점' 컬럼 업데이트 (해당하는 경우만)
+            </h3>
+            <p className="pl-7 text-slate-400 text-xs sm:text-sm">
+              이미 테이블을 생성한 기존 사용자의 경우, 중요도 별점 저장을 위해 다음 쿼리를 복사한 뒤 Supabase의 <strong className="text-slate-200">SQL Editor</strong>에서 추가 실행하시면 즉시 연동됩니다.
+            </p>
+            <div className="pl-7">
+              <pre className="p-3.5 text-[11px] font-mono rounded-lg border border-slate-800 bg-slate-950 text-amber-300 overflow-x-auto leading-normal select-all">
+                alter table public.notes add column importance integer not null default 1;
+              </pre>
+            </div>
+          </section>
+
           {/* Note */}
           <div className="p-4 rounded-xl bg-sky-950/20 border border-sky-900/30 text-xs text-sky-300 flex gap-2.5 items-start">
             <HelpCircle className="w-4 h-4 mt-0.5 shrink-0 text-sky-400" />

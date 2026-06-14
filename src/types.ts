@@ -13,6 +13,7 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
   tags: string[];
+  importance?: number; // Importance rating 1-5
 }
 
 export type NoteColor = {

@@ -572,6 +572,11 @@ export default function Workspace() {
                   ⚠️ Row Level Security (RLS) 정책오류입니다. SQL 가이드 2번의 정책 실행을 완료해 주세요!
                 </span>
               )}
+              {syncError.toLowerCase().includes("importance") && (
+                <span className="text-amber-300 font-semibold ml-1 shrink-0">
+                  ⚠️ 중요도 컬럼 누락오류입니다. SQL창에 <code className="bg-black/40 px-1 py-0.5 select-all text-yellow-300 font-mono">alter table public.notes add column importance integer not null default 1;</code>을 실행 후 [재진단]을 해주세요!
+                </span>
+              )}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">

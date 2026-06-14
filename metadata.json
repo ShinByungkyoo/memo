@@ -1,0 +1,6 @@
+{
+  "name": "Floating Notepad",
+  "description": "PC 화면에 띄워두고 편리하게 조작할 수 있는 세련된 드래그/리사이즈 지원 플로팅 메모장 앱 (Supabase 연동 및 로컬 백업 지원)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

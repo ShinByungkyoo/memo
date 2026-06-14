@@ -16,6 +16,7 @@ export default function Workspace() {
   const [supabaseLoading, setSupabaseLoading] = useState(false);
   const [dbConnected, setDbConnected] = useState(false);
   const [tableMissingError, setTableMissingError] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   
   // Keep track of timeouts for debouncing database writes per note id
   const debounceTimeoutsRef = useRef<{ [id: string]: NodeJS.Timeout }>({});
@@ -30,7 +31,9 @@ export default function Workspace() {
     try {
       const stored = localStorage.getItem("airnote-workspace-data");
       if (stored) {
-        setNotes(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setNotes(parsed);
+        return parsed as Note[];
       } else {
         // Pre-populate with beautiful welcome notes
         const defaultNotes: Note[] = [
@@ -85,15 +88,20 @@ export default function Workspace() {
         ];
         setNotes(defaultNotes);
         saveAndSync(defaultNotes);
+        return defaultNotes;
       }
     } catch (e) {
       console.error("Local storage 로딩 실패", e);
+      return [];
     }
   }, []);
 
   // Load initial notes (either Supabase or LocalStorage)
   const loadNotes = useCallback(async () => {
     setIsLoading(true);
+    
+    // Load local storage notes first so the user sees content instantly and their notes are never wiped
+    const localNotesArray = loadFromLocalStorage() || [];
     
     if (isDbConfigured && supabase) {
       setSupabaseLoading(true);
@@ -109,30 +117,49 @@ export default function Workspace() {
           if (error.message.includes("public.notes") || error.code === "PGRST116" || error.message.includes("relation") || error.message.includes("schema cache")) {
             setTableMissingError(true);
             setDbConnected(false);
+          } else {
+            setSyncError(error.message);
           }
-          loadFromLocalStorage();
         } else {
+          setDbConnected(true);
+          setTableMissingError(false);
+          setSyncError(null);
+          
           if (data && data.length > 0) {
+            // Use live database notes
             setNotes(data.map(dbToNote));
+          } else if (localNotesArray.length > 0) {
+            // Supabase notes table is completely empty, but we have local notes! Sync them up!
+            console.log("Supabase 비어있음 - 로컬 메모 클라우드에 일괄 업로드 동기화:", localNotesArray);
+            const dbPayloads = localNotesArray.map(noteToDb);
+            const { error: insertError } = await supabase
+              .from("notes")
+              .insert(dbPayloads);
+              
+            if (insertError) {
+              console.error("로컬 메모 Supabase 초기 동기화 실패:", insertError.message);
+              setSyncError(`구동 에러 (RLS 정책 등의 이슈일 수 있습니다): ${insertError.message}`);
+            } else {
+              console.log("로컬 메모 Supabase 초기 동기화 완수!");
+            }
           } else {
             setNotes([]);
           }
-          setDbConnected(true);
-          setTableMissingError(false);
         }
       } catch (err: any) {
-        console.error("데이터베이스 로드 중 무한 에러 발생", err);
-        if (err?.message?.includes("public.notes") || err?.message?.includes("schema cache")) {
+        console.error("데이터베이스 로드 중 에러 발생", err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("public.notes") || errMsg.includes("schema cache")) {
           setTableMissingError(true);
           setDbConnected(false);
+        } else {
+          setSyncError(errMsg);
         }
-        loadFromLocalStorage();
       } finally {
         setSupabaseLoading(false);
         setIsLoading(false);
       }
     } else {
-      loadFromLocalStorage();
       setIsLoading(false);
     }
   }, [isDbConfigured, loadFromLocalStorage]);
@@ -165,7 +192,7 @@ export default function Workspace() {
           };
           
           // Trigger debounced cloud synchronization if active database is set up
-          if (isDbConfigured && supabase && !tableMissingError) {
+          if (isDbConfigured && supabase) {
             triggerCloudSyncDebounced(finished);
           }
           
@@ -189,7 +216,7 @@ export default function Workspace() {
 
     // Set new timeout
     debounceTimeoutsRef.current[note.id] = setTimeout(async () => {
-      if (!supabase || tableMissingError) return;
+      if (!supabase) return;
       
       const dbPayload = noteToDb(note);
       try {
@@ -199,9 +226,28 @@ export default function Workspace() {
 
         if (error) {
           console.error(`SupaDB Sync Failed [ID: ${note.id}]:`, error.message);
+          
+          if (error.message.includes("public.notes") || error.message.includes("relation") || error.message.includes("schema cache")) {
+            setTableMissingError(true);
+            setDbConnected(false);
+          } else {
+            setSyncError(error.message);
+          }
+        } else {
+          // Auto-recovery success!
+          setTableMissingError(false);
+          setDbConnected(true);
+          setSyncError(null);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("Database update network exception", err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("public.notes") || errMsg.includes("schema cache")) {
+          setTableMissingError(true);
+          setDbConnected(false);
+        } else {
+          setSyncError(errMsg);
+        }
       }
     }, 800);
   };
@@ -237,14 +283,35 @@ export default function Workspace() {
     saveAndSync(updatedNotes);
 
     // Write to Supabase instantly for new item creation
-    if (isDbConfigured && supabase && !tableMissingError) {
+    if (isDbConfigured && supabase) {
       try {
         const { error } = await supabase
           .from("notes")
           .insert([noteToDb(newNote)]);
-        if (error) console.error("메모 추가 Supabase 동기화 오류:", error.message);
-      } catch (err) {
+        
+        if (error) {
+          console.error("메모 추가 Supabase 동기화 오류:", error.message);
+          if (error.message.includes("public.notes") || error.message.includes("relation") || error.message.includes("schema cache")) {
+            setTableMissingError(true);
+            setDbConnected(false);
+          } else {
+            setSyncError(error.message);
+          }
+        } else {
+          // Clean recovery
+          setTableMissingError(false);
+          setDbConnected(true);
+          setSyncError(null);
+        }
+      } catch (err: any) {
         console.error(err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("public.notes") || errMsg.includes("schema cache")) {
+          setTableMissingError(true);
+          setDbConnected(false);
+        } else {
+          setSyncError(errMsg);
+        }
       }
     }
   };
@@ -261,15 +328,35 @@ export default function Workspace() {
       delete debounceTimeoutsRef.current[id];
     }
 
-    if (isDbConfigured && supabase && !tableMissingError) {
+    if (isDbConfigured && supabase) {
       try {
         const { error } = await supabase
           .from("notes")
           .delete()
           .eq("id", id);
-        if (error) console.error("메모 삭제 Supabase 동기화 오류:", error.message);
-      } catch (err) {
+          
+        if (error) {
+          console.error("메모 삭제 Supabase 동기화 오류:", error.message);
+          if (error.message.includes("public.notes") || error.message.includes("relation") || error.message.includes("schema cache")) {
+            setTableMissingError(true);
+            setDbConnected(false);
+          } else {
+            setSyncError(error.message);
+          }
+        } else {
+          setTableMissingError(false);
+          setDbConnected(true);
+          setSyncError(null);
+        }
+      } catch (err: any) {
         console.error(err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.includes("public.notes") || errMsg.includes("schema cache")) {
+          setTableMissingError(true);
+          setDbConnected(false);
+        } else {
+          setSyncError(errMsg);
+        }
       }
     }
   };
@@ -314,7 +401,7 @@ export default function Workspace() {
         updatedAt: new Date().toISOString(),
       };
 
-      if (isDbConfigured && supabase && !tableMissingError) {
+      if (isDbConfigured && supabase) {
         triggerCloudSyncDebounced(updated);
       }
 
@@ -330,7 +417,7 @@ export default function Workspace() {
     const updatedNotes = notes.map((note) => {
       if (note.isPinned) {
         const updated = { ...note, isPinned: false, updatedAt: new Date().toISOString() };
-        if (isDbConfigured && supabase && !tableMissingError) {
+        if (isDbConfigured && supabase) {
           triggerCloudSyncDebounced(updated);
         }
         return updated;
@@ -350,15 +437,21 @@ export default function Workspace() {
     Object.values(debounceTimeoutsRef.current).forEach(clearTimeout);
     debounceTimeoutsRef.current = {};
 
-    if (isDbConfigured && supabase && !tableMissingError) {
+    if (isDbConfigured && supabase) {
       try {
         const { error } = await supabase
           .from("notes")
           .delete()
           .neq("title", "thisKeyMatchesNoNotesSoItDeletesEverything_SafeToSayWeDeleteAll");
-        if (error) console.error("전체 삭제 Supabase 동기화 오류:", error.message);
-      } catch (err) {
+        if (error) {
+          console.error("전체 삭제 Supabase 동기화 오류:", error.message);
+          setSyncError(error.message);
+        } else {
+          setSyncError(null);
+        }
+      } catch (err: any) {
         console.error(err);
+        setSyncError(err?.message || String(err));
       }
     }
   };
@@ -464,11 +557,48 @@ export default function Workspace() {
         </div>
       )}
 
+      {/* Supabase Sync Error Danger Banner */}
+      {!tableMissingError && syncError && (
+        <div 
+          id="supabase-sync-error-banner"
+          className="fixed top-14 left-0 right-0 h-11 bg-red-950/90 border-b border-red-900/30 backdrop-blur-md flex items-center justify-between px-4 sm:px-6 z-[990] text-xs text-red-200 font-sans shadow-lg select-none animation-fade-in"
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1 mr-4">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-400 animate-pulse" />
+            <span className="truncate leading-normal">
+              <strong>Supabase 동기화 에러:</strong> <code className="bg-black/40 px-1.5 py-0.5 rounded font-mono text-pink-300 mr-1 text-[11px] select-all">{syncError}</code>
+              {syncError.includes("policy") && (
+                <span className="text-amber-300 font-semibold ml-1 shrink-0">
+                  ⚠️ Row Level Security (RLS) 정책오류입니다. SQL 가이드 2번의 정책 실행을 완료해 주세요!
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="error-banner-retry-btn"
+              onClick={loadNotes}
+              className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-500/30 rounded transition-all cursor-pointer flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              재진단
+            </button>
+            <button
+              id="error-banner-close-btn"
+              onClick={() => setSyncError(null)}
+              className="w-6 h-6 rounded-full hover:bg-red-500/10 text-red-400 hover:text-red-200 flex items-center justify-center font-bold text-xs transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Draggable Workspace Canvas */}
       <div 
         id="desktop-board-canvas"
         className={`flex-1 w-full relative overflow-auto p-6 md:p-12 min-h-[calc(100vh-56px)] pb-24 z-10 transition-all ${
-          tableMissingError ? "pt-28" : "pt-20"
+          tableMissingError || syncError ? "pt-28" : "pt-20"
         }`}
       >
         {isLoading ? (
